@@ -29,30 +29,45 @@ This quick start guide assumes the following:
 
 You need to:
 
-- Install [git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git), install or update [python3](https://docs.python-guide.org/starting/install3/linux/). You may also find a simple text editor (like emacs) is useful for fine tuning, and if you are using a headless server then [x11vnc](http://www.karlrunge.com/x11vnc/) is helpful.
-- Add the following environment variables to your .profile: (feel free to use other directories):
-   - MONGO_DATA=/home/user_name/data/mongodb/
-   - PYSYS_CODE=/home/user_name/data/workspace3/pysystemtrade
-   - SCRIPT_PATH=/home/user_name/data/workspace3/pysystemtrade/sysproduction/linux/scripts
-   - ECHO_PATH=/home/user/echos
-- Create the following directories (again use other directories, but you must modify the .profile above and crontab below)
-   - '/data/mongodb/'
-   - '/echos/'
-   - '/workspace3/
-- Install the pysystemtrade package, and install or update, any dependencies in directory $PYSYS_CODE (it's possible to put it elsewhere, but you will need to modify the environment variables listed above)
-- [Set up interactive brokers](/docs/IB.md), download and install their python code, and get a gateway running.
-- [Install mongodb](https://docs.mongodb.com/manual/administration/install-on-linux/) 
-- create a file 'private_config.yaml' in the private directory of [pysystemtrade](#/private)
-- [check a mongodb server is running with the right data directory](/docs/futures.md#mongo-db) command line: `mongod --dbpath $MONGO_DATA`
-- launch an IB gateway (this could be done automatically depending on your security setup)
-- [Initialise the spot FX data in MongoDB from .csv files](/sysinit/futures/repocsv_spotfx_prices.py) (this will be out of date, but you will update it in a moment)
-- Update the FX price data in MongoDB using interactive brokers: command line:`. /home/your_user_name/workspace3/pysystemtrade/sysproduction/linux/scripts/read_fx_prices`
+- Prerequisites:
+    - Install [git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git), install or update [python3](https://docs.python-guide.org/starting/install3/linux/). You may also find a simple text editor (like emacs) is useful for fine tuning, and if you are using a headless server then [x11vnc](http://www.karlrunge.com/x11vnc/) is helpful.
+    - Add the following environment variables to your .profile: (feel free to use other directories):
+        - MONGO_DATA=/home/user_name/data/mongodb/
+        - PYSYS_CODE=/home/user_name/pysystemtrade
+        - SCRIPT_PATH=/home/user_name/pysystemtrade/sysproduction/linux/scripts
+        - ECHO_PATH=/home/user/echos
+        - MONGO_BACKUP_PATH=/media/shared_network/drive/mongo_backup
+    - Create the following directories (again use other directories, but you must modify the .profile above and crontab below)
+        - '/data/mongodb/'
+        - '/echos/'
+        - '/pysystemtrade/
+    - Install the pysystemtrade package, and install or update, any dependencies in directory $PYSYS_CODE (it's possible to put it elsewhere, but you will need to modify the environment variables listed above)
+    - [Set up interactive brokers](/docs/IB.md), download and install their python code, and get a gateway running.
+    - [Install mongodb](https://docs.mongodb.com/manual/administration/install-on-linux/)
+    - create a file 'private_config.yaml' in the private directory of [pysystemtrade](#/private)
+    - [check a mongodb server is running with the right data directory](/docs/futures.md#mongo-db) command line: `mongod --dbpath $MONGO_DATA`
+    - launch an IB gateway (this could be done automatically depending on your security setup)
+- FX data:
+    - [Initialise the spot FX data in MongoDB from .csv files](/sysinit/futures/repocsv_spotfx_prices.py) (this will be out of date, but you will update it in a moment)
+    - Check that you have got spot FX data present: command line:`. /pysystemtrade/sysproduction/linux/scripts/read_fx_prices`
+    - Update the FX price data in MongoDB using interactive brokers: command line:`. /home/your_user_name/workspace3/pysystemtrade/sysproduction/linux/scripts/update_fx_prices`
+- Instrument configuration:
+    - Set up futures instrument configuration using this script [instruments_csv_mongo.py](/sysinit/futures/instruments_csv_mongo.py).
+- Roll calendars:
+    - For *roll configuration* we need to initialise by running the code in this file [roll_parameters_csv_mongo.py](/sysinit/futures/roll_parameters_csv_mongo.py).
+    - Create roll calendars for each instrument you are trading. Assuming you are happy to infer these from the supplied data [use this script](/sysinit/futures/rollcalendars_from_providedcsv_prices.py)
+- Futures contract prices:
+    - [If you have a source of individual futures prices, then backfill them into the Arctic database](/docs/futures.md#get_historical_data)
+- Adjusted futures prices:
+    - Create 'multiple prices' in Arctic. Assuming you have prices in Artic and roll calendars in csv use [this script](/sysinit/futures/multipleprices_from_arcticprices_and_csv_calendars_to_arctic.py). I recommend *not* writing the multiple prices to .csv, so that you can compare the legacy .csv data with the new prices
+    - Create adjusted prices. Assuming you have multiple prices in Arctic use [this script](/sysinit/futures/adjustedprices_from_mongo_multiple_to_mongo.py)
+- Scheduling:
 - Initialise the [supplied crontab](/sysproduction/linux/crontab). Note if you have put your code or echos somewhere else you will need to modify the directory references at the top of the crontab.
 - All scripts executable by the crontab need to be executable, so do the following: `cd $SCRIPT_PATH` ; `sudo chmod +x update*` ;`sudo chmod +x truncate*` FIX ME ADD FURTHER FILES AS REQUIRED
 
 Before trading, and each time you restart the machine you should:
 
-- [check a mongodb server is running with the right data directory](/docs/futures.md#mongo-db) command line: `mongod --dbpath $MONGO_DATA`
+- [check a mongodb server is running with the right data directory](/docs/futures.md#mongo-db) command line: `mongod --dbpath $MONGO_DATA` (the supplied crontab should do this)
 - launch an IB gateway (this could [be done automatically](https://github.com/ib-controller/ib-controller) depending on your security setup)
 
 
@@ -131,24 +146,26 @@ Since the private directory is excluded from the git system (since you don't wan
 ```
 # pass commit quote as an argument
 # For example:
-# . commit 'this is a commit description string'
+# . commit "this is a commit description string"
 #
 # copy the contents of the private directory to another, git controlled, directory
 #
-cp -R ~/pysystemtrade/private/ ~/private/
+# we use rsync so we can exclude the git directory; which will screw things up as there is already one there
+#
+rsync -av ~/pysystemtrade/private/ ~/private --exclude .git
 #
 # git add/commit/push cycle on the main pysystemtrade directory
 #
 cd ~/pysystemtrade/
 git add *
-git commit -m $1
+git commit -m "$1"
 git push
 #
 # git add/commit/push cycle on the copied private directory
 #
 cd ~/private/
 git add *
-git commit -m $1
+git commit -m "$1"
 git push
 ```
 
@@ -159,7 +176,8 @@ A second script is run instead of a git pull:
 cd ~/private/
 git pull
 # copy the updated contents of the private directory to pysystemtrade private directory
-cp -R ~/private/ ~/pysystemtrade/
+# use rsync to avoid overwriting git metadata
+rsync -av ~/private/ ~/pysystemtrade/private --exclude .git
 # git pull from main pysystemtrade github repo
 cd ~/pysystemtrade/
 git pull
@@ -215,16 +233,18 @@ The default option is to store these all into a mongodb database, except for con
 
 ## Data backup
 
+### Mongo data
+
 Assuming that you are using the default mongob for storing, then I recommend using [mongodump](https://docs.mongodb.com/manual/reference/program/mongodump/#bin.mongodump) on a daily basis to back up your files. Other more complicated alternatives are available (see the [official mongodb man page](https://docs.mongodb.com/manual/core/backups/)). 
 
 Linux:
 ```
 # dumps everything into dump directory
 # make sure a mongo-db instance is running with correct directory, but ideally without any load; command line: `mongod --dbpath $MONGO_DATA`
-mongodump
+mongodump -o ~/dump/
 
-# copy dump directory to another machine or drive, here we assume there is a shared network drive mounted on all local machine
-cp -rf dump /media/shared-drive/mongo_backup/
+# copy dump directory to another machine or drive
+cp -rf ~/dump/* $MONGO_BACKUP_PATH
 
 # To restore:
 # FIX ME DOES THIS OVERWRITE???
@@ -235,6 +255,11 @@ mongorestore
 ```
 
 To avoid conflicts you should schedule your backup during the 'deadtime' for your system (see scheduling FIX ME LINK).
+
+### Mongo / csv data
+
+As I am super paranoid, I also like to output all my mongo_db data into .csv files, which I then regularly backup. This will allow a system recovery, should the mongo files be corrupted.
+*FIX ME NEED TO WRITE THIS FUNCTIONALITY*
 
 # Echoes, Logging, diagnostics and reporting
 
@@ -321,9 +346,12 @@ from syslogdiag.log import accessLogFromMongodb
 ```
 # can optionally pass mongodb connection attributes here
 mlog = accessLogFromMongodb()
+# Return a list of strings per log line
 mlog.get_log_items(dict(type="top-level-function")) # any attribute directory here is fine as a filter, defaults to last days results
-mlog.get_log_items(dict(type="top-level-function"), lookback_days=7) # get last weeks worth
-mlog.get_log_items_as_tuple(dict(type="top-level-function")) # returns as list of 4-tuple, useful for reporting
+# Printout log entries
+mlog.print_log_items(dict(type="top-level-function"), lookback_days=7) # get last weeks worth
+# Return a list of logEntry objects, useful for dissecting
+mlog.get_log_items_as_entries(dict(type="top-level-function"))
 ```
 
 

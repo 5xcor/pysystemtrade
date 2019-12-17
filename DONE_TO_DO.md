@@ -1,5 +1,26 @@
 # Release notes
 
+## Version 0.24.0 ACTIVE
+
+Fixed bugs relating to building multiple and adjusted prices
+Slight refactoring of futuresContractPrices objects. These only have FINAL, not CLOSE or SETTLE prices now.
+Added more data
+
+## Version 0.23.0
+
+'get_filename_for_package' can now take absolute as well as relative paths, and can cope with seperate file names
+Updated legacy .csv files
+Fixed a few bugs
+Can now get unexpired contracts for a given instrument using 'contractDateWithRollParameters.get_unexpired_contracts_from_now_to_contract_date()'
+
+## Version 0.22.0
+
+*Now requires python 3.6.0, pandas 0.25.2*
+Fixed a few bugs in production functions for FX prices
+Logging now requires an explicit labelling argument, eg `log=logtoscreen("String required here")
+Changed mongodb logging so now indexes on unique ID
+Generally cleaned up logging code
+Moved update fx price logic inside generic fx price object
 
 ## Version 0.21.0
 

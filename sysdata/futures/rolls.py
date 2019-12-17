@@ -2,6 +2,7 @@ from bisect import bisect_left, bisect_right
 
 import datetime
 import pandas as pd
+from copy import copy
 
 from syscore.dateutils import contract_month_from_number, month_from_contract_letter
 from sysdata.futures.contract_dates_and_expiries import contractDate, from_contract_numbers_to_contract_string, NO_DAY_PASSED, NO_EXPIRY_DATE_PASSED
@@ -360,7 +361,7 @@ class rollParameters(object):
         #    We want to roll 90 days ahead of that
         #    With thanks to https://github.com/tgibson11 for helping me get this right
 
-        adjusted_date = reference_date + pd.DateOffset(days = - (- self.roll_offset_day + self.approx_expiry_offset))
+        adjusted_date = reference_date - pd.DateOffset(days = (self.roll_offset_day + self.approx_expiry_offset))
 
         relevant_year_int, relevant_month_int = roll_cycle.yearmonth_inrollcycle_after_date(adjusted_date)
 
@@ -447,8 +448,8 @@ class contractDateWithRollParameters(contractDate):
     def _check_valid_date_in_priced_rollcycle(self):
         self._check_valid_date_in_named_rollcycle("priced_rollcycle")
 
-    def _check_valid_date_in_held_rollcycle(self):
-        self._check_valid_date_in_named_rollcycle("held_rollcycle")
+    def _check_valid_date_in_hold_rollcycle(self):
+        self._check_valid_date_in_named_rollcycle("hold_rollcycle")
 
     def _iterate_contract(self, direction_function_name, rollcycle_name):
         """
@@ -495,6 +496,36 @@ class contractDateWithRollParameters(contractDate):
     def previous_held_contract(self):
         return self._iterate_contract("previous_year_month", "hold_rollcycle")
 
+    def is_held_contract(self):
+        """
+        Does this contract appear in the held rollcycle?
+        Doesn't throw an error if it doesn't
+
+        :return: bool
+        """
+        try:
+            self._check_valid_date_in_hold_rollcycle()
+            return True
+        except:
+            return False
+
+    def first_valid_held_contract(self):
+        """
+        If this contract is in the held rollcycle, then return this contract. Else return the next valid one
+
+        :return: contract with roll calendar
+        """
+
+        if self.is_held_contract():
+            valid_contract_with_roll_parameters = self
+        else:
+            this_contract_date = self.as_date()
+            valid_contract = self.roll_parameters.approx_first_held_contractDate_at_date(this_contract_date)
+            valid_contract_date = valid_contract.contract_date
+            valid_contract_with_roll_parameters = contractDateWithRollParameters(self.roll_parameters, valid_contract_date)
+
+        return valid_contract_with_roll_parameters
+
     def carry_contract(self):
         if self.roll_parameters.carry_offset == -1:
             return self.previous_priced_contract()
@@ -506,6 +537,22 @@ class contractDateWithRollParameters(contractDate):
     def want_to_roll(self):
         return self.expiry_date+ datetime.timedelta(days = self.roll_parameters.roll_offset_day)
 
+    def get_unexpired_contracts_from_now_to_contract_date(self):
+        """
+        Returns all the unexpired contracts between now and the contract date
+
+        :return: list of contractDate
+        """
+
+        datetime_now = datetime.datetime.now()
+        contract_dates = []
+        current_contract = copy(self)
+
+        while current_contract.expiry_date >= datetime_now:
+            contract_dates.append(current_contract)
+            current_contract = current_contract.previous_priced_contract()
+
+        return contract_dates
 
 USE_CHILD_CLASS_ROLL_PARAMS_ERROR = "You need to use a child class of rollParametersData"
 

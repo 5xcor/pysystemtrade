@@ -18,7 +18,7 @@ class arcticFuturesContractPriceData(futuresContractPriceData):
     Class to read / write futures price data to and from arctic
     """
 
-    def __init__(self,  mongo_db=None, log=logtoscreen()):
+    def __init__(self,  mongo_db=None, log=logtoscreen("arcticFuturesContractPriceData")):
 
         super().__init__(log=log)
 
@@ -69,7 +69,7 @@ class arcticFuturesContractPriceData(futuresContractPriceData):
         ## What if not found? CHECK
 
         ## Returns a data frame which should have the right format
-        data = item.data
+        data = pd.DataFrame(item.data)
 
         return futuresContractPrices(data)
 

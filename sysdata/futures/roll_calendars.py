@@ -6,34 +6,6 @@ import pandas as pd
 import numpy as np
 
 
-def _find_best_matching_roll_date(roll_date, current_prices, next_prices):
-    """
-    Find the closest valid roll date for which we have overlapping prices
-
-    :param roll_date: datetime.datetime
-    :param current_prices: pd.Series
-    :param next_prices: pd.Series
-
-    :return: datetime.datetime or
-    """
-
-    # Get the list of dates for which
-    paired_prices = pd.concat([current_prices, next_prices], axis=1)
-    paired_prices_check_match = paired_prices.apply(lambda xlist: not any(np.isnan(xlist)), axis=1)
-    paired_prices_matching = paired_prices_check_match[paired_prices_check_match]
-    matching_dates = paired_prices_matching.index
-
-    if len(matching_dates)==0:
-        # no matching prices
-        raise LookupError("No date with a matching price for current and next contract")
-
-    # Find closest distance
-    distance_to_roll = matching_dates - roll_date
-    distance_to_roll_days = [abs(distance_item.days) for distance_item in distance_to_roll]
-    closest_date_index = distance_to_roll_days.index(min(distance_to_roll_days))
-    closest_date = matching_dates[closest_date_index]
-
-    return closest_date
 
 def _generate_approximate_calendar(list_of_contract_dates, roll_parameters_object):
     """
@@ -47,19 +19,43 @@ def _generate_approximate_calendar(list_of_contract_dates, roll_parameters_objec
 
     :return: data frame ready to be rollCalendar
     """
+    list_of_contract_dates.sort()
+    plausible_earliest_contract_date = list_of_contract_dates[0]
+    plausible_earliest_contract_with_roll_data = contractDateWithRollParameters(roll_parameters_object, plausible_earliest_contract_date)
 
-    contracts_with_roll_data = [contractDateWithRollParameters(roll_parameters_object, contract_date)
-                                     for contract_date in list_of_contract_dates]
+    # We do this in case the first contract in the data isn't in the roll cycle
+    earliest_contract_with_roll_data = plausible_earliest_contract_with_roll_data.first_valid_held_contract()
 
-    theoretical_roll_dates=[contract_date.want_to_roll() for contract_date in
-                            contracts_with_roll_data]
+    final_contract_date = list_of_contract_dates[-1]
+    final_contract_with_roll_data = contractDateWithRollParameters(roll_parameters_object, final_contract_date)
+    final_roll_date = final_contract_with_roll_data.want_to_roll()
+
+    current_contract = earliest_contract_with_roll_data
+    theoretical_roll_dates=[]
+    contracts_to_hold_on_each_roll = []
 
     # On the roll date we stop holding the current contract, and end up holding the next one
-    contracts_to_hold_on_each_roll = contracts_with_roll_data[:-1]
-    contract_dates_to_hold_on_each_roll = [contract.contract_date for contract in contracts_to_hold_on_each_roll]
+    # The roll date is the last day we hold the current contract
+    while current_contract.want_to_roll() <= final_roll_date:
+
+        # No point adding a non existent contract
+        try:
+            assert current_contract.contract_date in list_of_contract_dates
+        except:
+            raise Exception("Missing roll date %s from data when building roll calendar using hold calendar %s" % (current_contract.contract_date, str(roll_parameters_object.hold_rollcycle)))
+
+        current_roll_date = current_contract.want_to_roll()
+        theoretical_roll_dates.append(current_roll_date)
+        contracts_to_hold_on_each_roll.append(current_contract)
+        current_contract = current_contract.next_held_contract()
+
+
+
+    # We don't know what the next contract will be so we drop the final one
+    contract_dates_to_hold_on_each_roll = [contract.contract_date for contract in contracts_to_hold_on_each_roll[:-1]]
 
     # We also need a list of the next contract along
-    next_contract_along = contracts_with_roll_data[1:]
+    next_contract_along = contracts_to_hold_on_each_roll[1:]
     contract_dates_next_contact_along = [contract.contract_date for contract in next_contract_along]
 
     # we don't know what the next contract will be, so we drop the last roll date
@@ -92,10 +88,25 @@ def _adjust_to_price_series(approx_calendar, dict_of_futures_contract_prices):
         current_prices = dict_of_futures_contract_prices[current_contract]
         next_prices = dict_of_futures_contract_prices[next_contract]
 
+        # This is needed to avoid double rolls
+        if row_number>0:
+            last_adjusted_roll_date = adjusted_date_list[-1]
+        else:
+            last_adjusted_roll_date = None
+
         try:
-            adjusted_date = _find_best_matching_roll_date(roll_date, current_prices, next_prices)
+            # We use avoid here so that we don't get duplicate dates
+            adjusted_date = _find_best_matching_roll_date(roll_date, current_prices, next_prices,
+                                                          avoid_date=last_adjusted_roll_date)
         except LookupError:
-            raise Exception("Couldn't find matching roll date for contracts %s and %s" % (current_contract, next_contract))
+            if row_number == (len(approx_calendar.index)-1):
+                # We're done anyway most likely this is from a double roll on the last day
+                # Lose the last roll or will misalign
+                approx_calendar = approx_calendar.drop(approx_calendar.index[-1])
+                break
+            else:
+                # Happened in the middle somewhere
+                raise Exception("Couldn't find matching roll date for contracts %s and %s" % (current_contract, next_contract))
 
         adjusted_date_list.append(adjusted_date)
 
@@ -105,7 +116,44 @@ def _adjust_to_price_series(approx_calendar, dict_of_futures_contract_prices):
 
     return new_calendar
 
-def _add_carry_calendar(roll_calendar, roll_parameters_object):
+def _find_best_matching_roll_date(roll_date, current_prices, next_prices, avoid_date=None):
+    """
+    Find the closest valid roll date for which we have overlapping prices
+    If avoid_date is passed, get the next date after that
+
+    :param roll_date: datetime.datetime
+    :param current_prices: pd.Series
+    :param next_prices: pd.Series
+    :param avoid_date: datetime.datetime
+
+    :return: datetime.datetime or
+    """
+
+    # Get the list of dates for which a roll is possible
+    paired_prices = pd.concat([current_prices, next_prices], axis=1)
+    paired_prices_check_match = paired_prices.apply(lambda xlist: not any(np.isnan(xlist)), axis=1)
+    paired_prices_matching = paired_prices_check_match[paired_prices_check_match]
+    matching_dates = paired_prices_matching.index
+    matching_dates.sort_values()
+
+    if avoid_date is not None:
+        # Remove matching dates before avoid dates
+        matching_dates = matching_dates[matching_dates>avoid_date]
+
+    if len(matching_dates)==0:
+        # no matching prices
+        raise LookupError("No date with a matching price for current and next contract")
+
+    # Find closest distance
+    distance_to_roll = matching_dates - roll_date
+    distance_to_roll_days = [abs(distance_item.days) for distance_item in distance_to_roll]
+    closest_date_index = distance_to_roll_days.index(min(distance_to_roll_days))
+    closest_date = matching_dates[closest_date_index]
+
+
+    return closest_date
+
+def _add_carry_calendar(roll_calendar, roll_parameters_object, dict_of_futures_contract_prices):
     """
 
     :param roll_calendar: pdDataFrame with current_contract and next_contract
@@ -118,9 +166,19 @@ def _add_carry_calendar(roll_calendar, roll_parameters_object):
     contracts_with_roll_data = [contractDateWithRollParameters(roll_parameters_object, str(contract_date))
                                      for contract_date in list_of_contract_dates]
 
-    carry_contracts = [contract.carry_contract().contract_date for contract in contracts_with_roll_data]
+    carry_contract_dates = [contract.carry_contract().contract_date for contract in contracts_with_roll_data]
 
-    roll_calendar['carry_contract'] = carry_contracts
+    ## Special case if first carry contract missing with a negative offset
+    first_carry_contract = carry_contract_dates[0]
+    if first_carry_contract not in dict_of_futures_contract_prices:
+        # drop the first roll entirely
+        carry_contract_dates.pop(0)
+
+        # do the same with the calendar or will misalign
+        first_roll_date = roll_calendar.index[0]
+        roll_calendar = roll_calendar.drop(first_roll_date)
+
+    roll_calendar['carry_contract'] = carry_contract_dates
 
     return roll_calendar
 
@@ -160,7 +218,8 @@ class rollCalendar(pd.DataFrame):
 
         adjusted_calendar = _adjust_to_price_series(approx_calendar, dict_of_futures_contract_prices)
 
-        adjusted_calendar_with_carry = _add_carry_calendar(adjusted_calendar, roll_parameters_object)
+        adjusted_calendar_with_carry = _add_carry_calendar(adjusted_calendar,
+                                                           roll_parameters_object, dict_of_futures_contract_prices)
         roll_calendar = rollCalendar(adjusted_calendar_with_carry)
 
         return roll_calendar
@@ -261,6 +320,18 @@ class rollCalendar(pd.DataFrame):
 
         return checks_okay
 
+    def last_current_contract(self):
+        """
+        Returns the oldest contract in the final row of the row calendar
+
+        :return: contractDate
+        """
+
+        final_row = self.tail(1).values
+        last_contract_numeric = final_row.max()
+        last_contract = contractDate(str(last_contract_numeric))
+
+        return last_contract
 
 USE_CHILD_CLASS_ROLL_CALENDAR_ERROR = "You need to use a child class of rollCalendarData"
 
